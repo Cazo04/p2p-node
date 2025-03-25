@@ -1,0 +1,20 @@
+{
+  "name": "p2p-node",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "blake2": "^5.0.0",
+    "fs": "^0.0.1-security",
+    "path": "^0.12.7",
+    "socket.io-client": "^4.8.1",
+    "systeminformation": "^5.25.11",
+    "wrtc": "^0.4.7"
+  }
+}
