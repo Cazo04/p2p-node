@@ -694,8 +694,8 @@ function createPeerConnection(peerId) {
         }
     };
     
-    const dataChannel = peerConnection.createDataChannel(`fileTransfer-${peerId}`);
-    setupDataChannel(dataChannel, peerId);
+    // const dataChannel = peerConnection.createDataChannel(`fileTransfer-${peerId}`);
+    // setupDataChannel(dataChannel, peerId);
     
     peerConnections[peerId] = peerConnection;
     return peerConnection;
@@ -703,6 +703,8 @@ function createPeerConnection(peerId) {
 
 // Set up data channel event handlers
 function setupDataChannel(dataChannel, peerId) {
+    if (dataChannels[peerId]) return;
+
     dataChannel.binaryType = 'arraybuffer';
     
     dataChannel.onopen = () => {
@@ -729,7 +731,7 @@ function handleDataChannelMessage(data, peerId) {
     try {
         if (typeof data === 'string') {
             const message = JSON.parse(data);
-            console.log(`Control message from ${peerId}: ${message.type}`);
+            console.log(`Control message from ${peerId}: ${message.type} - ${message.fragmentId}`);
             
             switch (message.type) {
                 case 'file_request':
@@ -759,6 +761,8 @@ function handleDataChannelMessage(data, peerId) {
 let abortedEmitters = {};
 
 function abortedTransfer(fragmentId, peerId) {
+    if (!abortedEmitters[fragmentId]) return;
+
     if (abortedEmitters[fragmentId][peerId]) {
         abortedEmitters[fragmentId][peerId].emit('abort');
     }
@@ -942,14 +946,21 @@ function sendFileToPeer(peerId, fragmentId) {
                 // Track transfer progress
                 bytesTransferred += chunk.length;
                 
+                // Check if this is the last chunk
+                const isLastChunk = bytesTransferred >= fileSize;
+                if (isLastChunk) {
+                    //console.log(`Sending final chunk of ${fragmentId} to ${peerId}`);
+                }
+                
                 // Prepare data packet with efficient buffer concatenation
                 const fragmentIdBuffer = Buffer.from(fragmentId);
-                const idLengthBuffer = Buffer.alloc(1);
-                idLengthBuffer.writeUInt8(fragmentIdBuffer.length);
+                const headerBuffer = Buffer.alloc(2); // 1 byte for ID length, 1 byte for lastChunk flag
+                headerBuffer.writeUInt8(fragmentIdBuffer.length, 0);
+                headerBuffer.writeUInt8(isLastChunk ? 1 : 0, 1); // Add last chunk flag
                 
                 // Efficient buffer allocation
-                const data = Buffer.concat([idLengthBuffer, fragmentIdBuffer, chunk], 
-                                          1 + fragmentIdBuffer.length + chunk.length);
+                const data = Buffer.concat([headerBuffer, fragmentIdBuffer, chunk], 
+                                          2 + fragmentIdBuffer.length + chunk.length);
                 
                 // Improved backpressure handling with dynamic throttling
                 if (dataChannel.bufferedAmount > CHUNK_SIZE * 8) {

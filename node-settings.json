@@ -12,17 +12,13 @@
     ]
   },
   "info": {
-    "id": "b226a452-a8b2-42a1-8176-c7830be4bbbb",
-    "auth_token": "019587d8-a2e7-754f-9db8-a42d5fee43aa"
+    "id": "",
+    "auth_token": ""
   },
   "paths": [
     {
       "path": "/home/user/p2p-media-system/build-node-client/",
       "threshold": 80
-    },
-    {
-      "path": "C:\\Tool",
-      "threshold": 50
     }
   ]
 }
