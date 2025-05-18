@@ -1266,10 +1266,10 @@ function sendFileToPeer(peerId, fragmentId) {
                     const avgSpeed = (fileSize / 1024 / totalTime).toFixed(2);
                     console.log(`Completed sending file ${fragmentId} to ${peerId} in ${totalTime.toFixed(1)}s (avg: ${avgSpeed} KB/s)`);
 
-                    sendControlMessage(peerId, {
-                        type: 'transfer_complete',
-                        fragmentId: fragmentId
-                    });
+                    // sendControlMessage(peerId, {
+                    //     type: 'transfer_complete',
+                    //     fragmentId: fragmentId
+                    // });
 
                     socket.emit('client_request', {
                         fragmentId: fragmentId,
