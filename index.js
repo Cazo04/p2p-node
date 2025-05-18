@@ -121,7 +121,18 @@ async function checkDiskSpace(storageInfo) {
         const fsInfo = await si.fsSize();
 
         // Find the file system containing the provided path
-        const relevantFs = fsInfo.find(fs => fs.mount && storageInfo.path.startsWith(fs.mount));
+        let relevantFs = null;
+        let longestMatch = 0;
+
+        for (const fs of fsInfo) {
+            if (fs.mount && storageInfo.path.startsWith(fs.mount)) {
+            // Check if this is a longer match than what we have
+            if (fs.mount.length > longestMatch) {
+                longestMatch = fs.mount.length;
+                relevantFs = fs;
+            }
+            }
+        }
         console.log('relevantFs:', relevantFs);
 
         if (!relevantFs) {
