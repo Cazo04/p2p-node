@@ -3,7 +3,7 @@ const io = require('socket.io-client');
 const { createHash } = require('blake2');
 const fs = require('fs');
 const path = require('path');
-const wrtc = require('wrtc');
+const wrtc = require('@roamhq/wrtc');
 const { EventEmitter, on } = require('events');
 const net = require('net');
 
