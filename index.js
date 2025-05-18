@@ -128,7 +128,7 @@ async function checkDiskSpace(storageInfo) {
             throw new Error(`Could not find filesystem for path: ${storageInfo.path}`);
         }
 
-        console.log(`Checking disk space for ${storageInfo.path}: ${storageInfo.threshold}`);
+        console.log(`Checking disk space for ${storageInfo.path}: ${relevantFs.size}`);
         const thresholdLimit = Math.floor((relevantFs.size * storageInfo.threshold) / 100);
         console.log(`Threshold limit for ${storageInfo.path} is ${thresholdLimit} bytes`);
         // Return values in bytes without conversion

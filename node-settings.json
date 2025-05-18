@@ -17,7 +17,7 @@
   },
   "paths": [
     {
-      "path": "/home/user/p2p-media-system/build-node-client/",
+      "path": "/home/user/p2p-media-system/p2p-node/",
       "threshold": 80
     }
   ]
