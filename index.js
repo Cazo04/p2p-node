@@ -133,7 +133,6 @@ async function checkDiskSpace(storageInfo) {
             }
             }
         }
-        console.log('relevantFs:', relevantFs);
 
         if (!relevantFs) {
             throw new Error(`Could not find filesystem for path: ${storageInfo.path}`);
