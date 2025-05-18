@@ -122,15 +122,15 @@ async function checkDiskSpace(storageInfo) {
 
         // Find the file system containing the provided path
         const driveLetter = storageInfo.path.charAt(0).toUpperCase();
+        console.log(`Drive letter: ${driveLetter}`);
         const relevantFs = fsInfo.find(fs => fs.mount && fs.mount.charAt(0).toUpperCase() === driveLetter);
 
         if (!relevantFs) {
             throw new Error(`Could not find filesystem for path: ${storageInfo.path}`);
         }
 
-        console.log(`Checking disk space for ${storageInfo.path}: ${driveLetter}`);
         const thresholdLimit = Math.floor((relevantFs.size * storageInfo.threshold) / 100);
-        console.log(`Threshold limit for ${storageInfo.path} is ${thresholdLimit} bytes`);
+
         // Return values in bytes without conversion
         return {
             path: storageInfo.path,
