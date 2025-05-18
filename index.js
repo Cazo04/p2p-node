@@ -929,9 +929,7 @@ function handleDataChannelMessage(data, peerId) {
                 //     prepareFileReception(message, peerId);
                 //     break;
                 case 'ready_to_receive':
-                    setTimeout(() => {
-                        sendFileToPeer(peerId, message.fragmentId);
-                    }, 2000);
+                    sendFileToPeer(peerId, message.fragmentId);
                     break;
                 case 'transfer_complete':
                     console.log(`Transfer of ${message.fragmentId} complete`);
@@ -1059,7 +1057,6 @@ function handleFileChunk(data, peerId) {
 }
 
 function sendFileToPeer(peerId, fragmentId) {
-    
     try {
         if (!fragmentsMap.has(fragmentId)) return;
 
