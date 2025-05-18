@@ -122,7 +122,7 @@ async function checkDiskSpace(storageInfo) {
 
         // Find the file system containing the provided path
         const driveLetter = storageInfo.path.charAt(0).toUpperCase();
-        console.log(`Drive letter: ${driveLetter}`);
+        console.log(fsInfo);
         const relevantFs = fsInfo.find(fs => fs.mount && fs.mount.charAt(0).toUpperCase() === driveLetter);
 
         if (!relevantFs) {
