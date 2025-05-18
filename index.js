@@ -926,7 +926,9 @@ function handleDataChannelMessage(data, peerId) {
                 //     prepareFileReception(message, peerId);
                 //     break;
                 case 'ready_to_receive':
-                    sendFileToPeer(peerId, message.fragmentId);
+                    setTimeout(() => {
+                        sendFileToPeer(peerId, message.fragmentId);
+                    }, 200);
                     break;
                 case 'transfer_complete':
                     console.log(`Transfer of ${message.fragmentId} complete`);
