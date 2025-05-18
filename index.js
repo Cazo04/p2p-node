@@ -121,9 +121,7 @@ async function checkDiskSpace(storageInfo) {
         const fsInfo = await si.fsSize();
 
         // Find the file system containing the provided path
-        const driveLetter = storageInfo.path.charAt(0).toUpperCase();
-        console.log(fsInfo);
-        const relevantFs = fsInfo.find(fs => fs.mount && fs.mount.charAt(0).toUpperCase() === driveLetter);
+        const relevantFs = fsInfo.find(fs => fs.mount && storageInfo.path.startsWith(fs.mount));
 
         if (!relevantFs) {
             throw new Error(`Could not find filesystem for path: ${storageInfo.path}`);
