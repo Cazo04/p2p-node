@@ -884,6 +884,9 @@ function setupDataChannel(dataChannel, peerId) {
         console.log(`Data channel to ${peerId} opened`);
         dataChannels[peerId] = dataChannel;
 
+        //Send pong message to peer
+        dataChannel.send('pong');
+
         if (!peerStats.get(peerId)) {
             peerStats.set(peerId, {
                 rtt: null,
