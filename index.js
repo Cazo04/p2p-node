@@ -610,10 +610,10 @@ socket.on('command', (data) => {
 
             // Return a promise for this download operation
             return (async () => {
-                console.log(`Processing download for fragment ${fragment_id} from ${fragment_url}`);
+                //console.log(`Processing download for fragment ${fragment_id} from ${fragment_url}`);
                 try {
                     const fileSize = await getFileSize(fragment_url);
-                    console.log(`Fragment ${fragment_id} has size: ${fileSize} bytes`);
+                    //console.log(`Fragment ${fragment_id} has size: ${fileSize} bytes`);
 
                     const suitablePath = await findSuitablePath(fileSize);
 
@@ -626,7 +626,7 @@ socket.on('command', (data) => {
                         };
                     }
 
-                    console.log(`Downloading fragment ${fragment_id} to ${suitablePath}`);
+                    //console.log(`Downloading fragment ${fragment_id} to ${suitablePath}`);
                     const filePath = await downloadFile(fragment_id, fragment_url, suitablePath);
                     console.log(`Successfully downloaded fragment ${fragment_id} to ${filePath}`);
 
@@ -797,13 +797,13 @@ async function pollPeer(p,id) {
         //console.log(`Peer stats:`, s);
     });
 
-    console.log(`RTT: ${rtt} ms`);
-    console.log(`Bytes sent: ${bytesSent - peerStat.bytesSent}`);
-    console.log(`Bytes received: ${bytesReceived - peerStat.bytesReceived}`);
-    console.log(`Remote IPv4: ${remote_ipv4}`);
-    console.log(`Remote IPv6: ${remote_ipv6}`);
-    console.log(`Local IPv4: ${local_ipv4}`);
-    console.log(`Local IPv6: ${local_ipv6}`);
+    // console.log(`RTT: ${rtt} ms`);
+    // console.log(`Bytes sent: ${bytesSent - peerStat.bytesSent}`);
+    // console.log(`Bytes received: ${bytesReceived - peerStat.bytesReceived}`);
+    // console.log(`Remote IPv4: ${remote_ipv4}`);
+    // console.log(`Remote IPv6: ${remote_ipv6}`);
+    // console.log(`Local IPv4: ${local_ipv4}`);
+    // console.log(`Local IPv6: ${local_ipv6}`);
 
     socket.emit('peer_stats', {
         peerId: id,
