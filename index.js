@@ -3,9 +3,10 @@ const io = require('socket.io-client');
 const { createHash } = require('blake2');
 const fs = require('fs');
 const path = require('path');
-const { url } = require('inspector');
 const wrtc = require('wrtc');
-const { EventEmitter } = require('events');
+const { EventEmitter, on } = require('events');
+const net = require('net');
+
 // Load configuration from file
 const configFilePath = path.join(__dirname, 'node-settings.json');
 let config;
@@ -13,11 +14,11 @@ let config;
 // Check if config file exists
 if (!fs.existsSync(configFilePath)) {
     console.log('Settings file not found! Creating template...');
-    
+
     // Create default config template
     const defaultConfig = {
         "signaling_servers": [
-            "http://192.168.5.4:30080/socket.io",
+            "https://p2p.cazo-dev.net/socket.io",
             "http://localhost:3000",
         ],
         "webrtc": {
@@ -38,10 +39,10 @@ if (!fs.existsSync(configFilePath)) {
             },
         ]
     };
-    
+
     // Write the default config to file
     fs.writeFileSync(configFilePath, JSON.stringify(defaultConfig, null, 2));
-    
+
     console.log('Settings template created at:', configFilePath);
     console.log('Please edit the settings file with your configuration and restart the application.');
     process.exit(1);
@@ -178,11 +179,17 @@ async function sendDiskSpace() {
             deviceDisk.totalSize += info.totalSizeBytes;
             deviceDisk.availableSpace += info.availableSpaceBytes;
         });
-        //console.log('Disk space:', diskSpaceInfo);
-        //console.log('Device disk:', deviceDisk);
+
+        // Get memory information
+        const memInfo = await si.mem();
+        const ramUsagePercent = ((memInfo.total - memInfo.available) / memInfo.total) * 100;
+
+        console.log(`Current RAM usage: ${ramUsagePercent.toFixed(2)}%`);
+
         const device_space = {
             node_info: node_info,
-            disk_space: deviceDisk
+            disk_space: deviceDisk,
+            ram_usage: ramUsagePercent.toFixed(2),
         };
         //console.log('Sending disk space information:', device_space);
         socket.emit('device_space', device_space);
@@ -288,22 +295,23 @@ function startPeriodicReporting() {
     console.log('Starting periodic reporting...');
 
     // Send disk space info every 20 seconds as heartbeat
-    diskSpaceInterval = setInterval(() => {    
+    diskSpaceInterval = setInterval(() => {
         if (!isCommandProcessing) {
             sendDiskSpace();
         } else {
             console.log('Command processing in progress, skipping disk space report');
-        } 
+        }
     }, 20000);
 
     // Send list of hashes every 5 minutes
-    hashesInterval = setInterval(() => {
-        if (!isHashProcessing) {
-            sendListHashes();
-        } else {
-            console.log('Hash processing in progress, skipping hashes report');
-        }
-    }, 300000);
+    // hashesInterval = setInterval(() => {
+    //     if (!isHashProcessing) {
+    //         sendListHashes();
+    //     } else {
+    //         console.log('Hash processing in progress, skipping hashes report');
+    //     }
+    // }, 300000);
+    sendListHashes();
 }
 
 // Clean up intervals on process exit
@@ -371,7 +379,7 @@ async function startUp() {
 
     // Rebuild fragments map by scanning all monitored paths
     console.log(`Building fragments map from monitored paths`);
-    
+
     for (const pathObj of monitoredPaths) {
         const dirPath = pathObj.path;
         if (fs.existsSync(dirPath)) {
@@ -598,7 +606,7 @@ socket.on('command', (data) => {
         // Create array to collect all download promises
         const downloadPromises = download_fragment.map(fragment => {
             const fragment_id = fragment.id;
-            const fragment_url = fragment.url;           
+            const fragment_url = fragment.url;
 
             // Return a promise for this download operation
             return (async () => {
@@ -625,9 +633,11 @@ socket.on('command', (data) => {
                     // Add new fragment information
                     fragmentsMap.set(fragment_id, { path: filePath });
 
+                    const hash = calculateBlake2bHash(filePath);
                     return {
                         id: fragment_id,
-                        status: 'ok'
+                        status: 'ok',
+                        hash: hash
                     };
                 } catch (error) {
                     console.error(`Error processing download for fragment ${fragment_id}:`, error.message);
@@ -643,22 +653,27 @@ socket.on('command', (data) => {
         // Wait for all downloads to complete before sending status
         Promise.all(downloadPromises)
             .then(results => {
-                status.download_status = results;
+
+                socket.emit('dowload_status', {
+                    node_info: node_info,
+                    download_status: results
+                });
                 console.log('All fragment downloads completed');
             })
             .catch(error => {
                 console.error('Error processing downloads:', error);
             });
     }
+    isCommandProcessing = false;
 
     // Send status after all commands have been processed
-    //socket.emit('command_status', status);
-    setTimeout(() => {
-        isCommandProcessing = false;
-        if (!isHashProcessing) {
-            sendListHashes();
-        }
-    }, 2000);
+
+    // setTimeout(() => {
+    //     isCommandProcessing = false;
+    //     if (!isHashProcessing) {
+    //         sendListHashes();
+    //     }
+    // }, 2000);
 });
 
 // WebRTC functionality for peer-to-peer file transfers
@@ -667,6 +682,8 @@ const { RTCPeerConnection, RTCSessionDescription, RTCIceCandidate } = wrtc;
 let peerConnections = {};
 let dataChannels = {};
 let activeTransfers = {};
+const peerActivity = new Map();
+const peerStats = new Map();
 
 // Function to create a new WebRTC peer connection
 function createPeerConnection(peerId) {
@@ -677,7 +694,7 @@ function createPeerConnection(peerId) {
 
     console.log(`Creating new peer connection to ${peerId}`);
     const peerConnection = new RTCPeerConnection(webrtcConfig);
-    
+
     peerConnection.onicecandidate = (event) => {
         if (event.candidate) {
             socket.emit('ice_candidate', {
@@ -686,19 +703,164 @@ function createPeerConnection(peerId) {
             });
         }
     };
-    
+
     peerConnection.oniceconnectionstatechange = () => {
         console.log(`ICE connection state: ${peerConnection.iceConnectionState}`);
         if (['failed', 'disconnected', 'closed'].includes(peerConnection.iceConnectionState)) {
             cleanupPeerConnection(peerId);
         }
     };
-    
+
     // const dataChannel = peerConnection.createDataChannel(`fileTransfer-${peerId}`);
     // setupDataChannel(dataChannel, peerId);
-    
+
     peerConnections[peerId] = peerConnection;
     return peerConnection;
+}
+
+function classifyIp(ip) {
+    const ver = net.isIP(ip);       
+    if (ver === 0) return { version: 'unknown', type: 'unknown' };
+  
+    if (ver === 4) {
+      return { version: 'IPv4', type: isPrivateV4(ip) ? 'private' : 'public' };
+    }
+  
+    return { version: 'IPv6', type: isPrivateV6(ip) ? 'private' : 'public' };
+  }
+  
+  function isPrivateV4(ip) {
+    const [a, b] = ip.split('.').map(Number);
+  
+    // RFC 1918 private blocks
+    if (a === 10) return true;                     // 10.0.0.0/8
+    if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
+    if (a === 192 && b === 168) return true;       // 192.168.0.0/16
+  
+    if (a === 127) return true;                    // loopback 127.0.0.0/8
+    if (a === 169 && b === 254) return true;       // link‑local 169.254.0.0/16
+    if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT 100.64.0.0/10
+  
+    return false;
+  }
+  
+  function isPrivateV6(ip) {
+  
+    const addr = ip.split('%')[0].toLowerCase();
+  
+    if (addr.startsWith('fc') || addr.startsWith('fd')) return true;
+  
+    if (/^fe[89ab]/.test(addr)) return true;
+  
+    if (addr === '::1') return true;
+  
+    return false;
+  }
+
+async function pollPeer(p,id) {
+    const report = await p.getStats();
+    let rtt = null;
+    let bytesSent = 0;
+    let bytesReceived = 0;
+    let remote_ipv4 = null;
+    let remote_ipv6 = null;
+    let local_ipv4 = null;
+    let local_ipv6 = null;
+
+    const peerStat = peerStats.get(id);
+
+    report.forEach(s => {
+        if (s.type === 'candidate-pair' && s.state === 'succeeded')
+            rtt = s.currentRoundTripTime * 1000;
+
+        if (s.type === 'data-channel' && s.state === 'open') {
+            bytesSent = s.bytesSent;
+            bytesReceived = s.bytesReceived;
+        }
+        if (s.type === 'remote-candidate') {
+            const ip = s.ip;
+            const { version, type } = classifyIp(ip);
+            if (type === 'public') {
+                if (version === 'IPv4') remote_ipv4 = ip;
+                else remote_ipv6 = ip;
+            }
+        }
+        if (s.type === 'local-candidate') {
+            const ip = s.ip;
+            const { version, type } = classifyIp(ip);
+            if (type === 'public') {
+                if (version === 'IPv4') local_ipv4 = ip;
+                else local_ipv6 = ip;
+            }
+        }
+
+        //console.log(`Peer stats:`, s);
+    });
+
+    console.log(`RTT: ${rtt} ms`);
+    console.log(`Bytes sent: ${bytesSent - peerStat.bytesSent}`);
+    console.log(`Bytes received: ${bytesReceived - peerStat.bytesReceived}`);
+    console.log(`Remote IPv4: ${remote_ipv4}`);
+    console.log(`Remote IPv6: ${remote_ipv6}`);
+    console.log(`Local IPv4: ${local_ipv4}`);
+    console.log(`Local IPv6: ${local_ipv6}`);
+
+    socket.emit('peer_stats', {
+        peerId: id,
+        rtt: rtt,
+        bytesSent: bytesSent - peerStat.bytesSent,
+        bytesReceived: bytesReceived - peerStat.bytesReceived,
+        remote_ipv4: remote_ipv4,
+        remote_ipv6: remote_ipv6,
+        local_ipv4: local_ipv4,
+        local_ipv6: local_ipv6,
+    });
+
+    peerStats.set(id, {
+        ...peerStats.get(id),
+        rtt: rtt,
+        bytesSent: bytesSent,
+        bytesReceived: bytesReceived,
+        remote_ipv4: remote_ipv4,
+        remote_ipv6: remote_ipv6,
+        local_ipv4: local_ipv4,
+        local_ipv6: local_ipv6
+    });
+}
+
+function onNewPeer(peerId) {
+    const peer = peerConnections[peerId];
+  
+    const id = setInterval(()=> pollPeer(peer,peerId), 1000);
+  
+    peer.oniceconnectionstatechange = () => {
+      if (['failed', 'disconnected', 'closed'].includes(peer.iceConnectionState)) {
+        clearInterval(id);
+        clearTimeout(peerStats.get(peerId).peerTimeOut);
+        socket.emit('peer_stats', {
+            peerId: peerId,
+            isDisconnected: true
+        });
+        peerStats.delete(peerId);
+      }
+    };
+  }
+
+function startCountdown(peerId) {
+    const stat = peerStats.get(peerId);
+    if (!stat) return;
+
+    if (stat.peerTimeOut) {
+        clearTimeout(stat.peerTimeOut);        
+    }
+
+    peerStats.set(peerId, {
+        ...stat,
+        peerTimeOut: setTimeout(() => {
+            console.log(`Peer ${peerId} timed out`);
+            cleanupPeerConnection(peerId);
+        }, 10000)
+    });
 }
 
 // Set up data channel event handlers
@@ -706,21 +868,31 @@ function setupDataChannel(dataChannel, peerId) {
     if (dataChannels[peerId]) return;
 
     dataChannel.binaryType = 'arraybuffer';
-    
+
     dataChannel.onopen = () => {
         console.log(`Data channel to ${peerId} opened`);
         dataChannels[peerId] = dataChannel;
+
+        if (!peerStats.get(peerId)) {
+            peerStats.set(peerId, {
+                rtt: null,
+                bytesSent: 0,
+                bytesReceived: 0,
+            });
+            startCountdown(peerId);
+            onNewPeer(peerId);
+        }
     };
-    
+
     dataChannel.onclose = () => {
         console.log(`Data channel to ${peerId} closed`);
         delete dataChannels[peerId];
     };
-    
+
     dataChannel.onerror = (error) => {
         console.error(`Data channel error with peer ${peerId}:`, error);
     };
-    
+
     dataChannel.onmessage = (event) => {
         handleDataChannelMessage(event.data, peerId);
     };
@@ -729,10 +901,12 @@ function setupDataChannel(dataChannel, peerId) {
 // Handle incoming data channel messages
 function handleDataChannelMessage(data, peerId) {
     try {
+        startCountdown(peerId);
+
         if (typeof data === 'string') {
             const message = JSON.parse(data);
             console.log(`Control message from ${peerId}: ${message.type} - ${message.fragmentId}`);
-            
+
             switch (message.type) {
                 case 'file_request':
                     handleFileRequest(message, peerId);
@@ -770,6 +944,8 @@ function abortedTransfer(fragmentId, peerId) {
 
 // Send control message through data channel
 function sendControlMessage(peerId, message) {
+    startCountdown(peerId);
+
     if (dataChannels[peerId]?.readyState === 'open') {
         dataChannels[peerId].send(JSON.stringify(message));
     } else {
@@ -781,7 +957,7 @@ function sendControlMessage(peerId, message) {
 function handleFileRequest(request, peerId) {
     try {
         const fragmentId = request.fragmentId;
-        
+
         if (!fragmentsMap.has(fragmentId)) {
             sendControlMessage(peerId, {
                 type: 'transfer_error',
@@ -790,10 +966,10 @@ function handleFileRequest(request, peerId) {
             });
             return;
         }
-        
+
         const filePath = fragmentsMap.get(fragmentId).path;
         const stats = fs.statSync(filePath);
-        
+
         sendControlMessage(peerId, {
             type: 'file_info',
             fragmentId: fragmentId,
@@ -815,7 +991,7 @@ function prepareFileReception(fileInfo, peerId) {
                 });
                 return;
             }
-            
+
             const filePath = path.join(suitablePath, fileInfo.fragmentId);
             activeTransfers[fileInfo.fragmentId] = {
                 fileStream: fs.createWriteStream(filePath),
@@ -824,7 +1000,7 @@ function prepareFileReception(fileInfo, peerId) {
                 receivedSize: 0,
                 totalSize: fileInfo.size
             };
-            
+
             sendControlMessage(peerId, {
                 type: 'ready_to_receive',
                 fragmentId: fileInfo.fragmentId
@@ -839,25 +1015,25 @@ function handleFileChunk(data, peerId) {
         const uint8Array = new Uint8Array(data);
         const fragmentId = Buffer.from(uint8Array.slice(1, 1 + fragmentIdLen)).toString();
         const fileData = uint8Array.slice(1 + fragmentIdLen);
-        
+
         const transfer = activeTransfers[fragmentId];
         if (!transfer) return;
-        
+
         const chunk = Buffer.from(fileData);
         transfer.fileStream.write(chunk);
         transfer.receivedSize += chunk.length;
-        
+
         if (transfer.receivedSize >= transfer.totalSize) {
             transfer.fileStream.end();
-            
+
             // Update fragments map
             fragmentsMap.set(transfer.fragmentId, { path: transfer.filePath });
-            
+
             sendControlMessage(peerId, {
                 type: 'transfer_complete',
                 fragmentId: transfer.fragmentId
             });
-            
+
             delete activeTransfers[fragmentId];
             sendListHashes();
         }
@@ -869,18 +1045,18 @@ function handleFileChunk(data, peerId) {
 function sendFileToPeer(peerId, fragmentId) {
     try {
         if (!fragmentsMap.has(fragmentId)) return;
-        
+
         const filePath = fragmentsMap.get(fragmentId).path;
         const dataChannel = dataChannels[peerId];
-        
+
         if (!dataChannel || dataChannel.readyState !== 'open') return;
-        
+
         // Check system memory before starting transfer
         si.mem().then(memInfo => {
             const availableMemoryPercent = (memInfo.available / memInfo.total) * 100;
             const fileStats = fs.statSync(filePath);
             const fileSize = fileStats.size;
-            
+
             // Reject transfer if less than 15% memory available or file is too large
             if (availableMemoryPercent < 15 || dataChannel.bufferedAmount > 10 * 1024 * 1024) {
                 console.log(`Rejecting file transfer: ${fragmentId} - System memory low: ${availableMemoryPercent.toFixed(2)}%`);
@@ -892,43 +1068,52 @@ function sendFileToPeer(peerId, fragmentId) {
                 });
                 return;
             }
-            
+
             console.log(`Starting file transfer: ${fragmentId} to ${peerId}`);
-            socket.emit('start_sending', {
+            socket.emit('client_request', {
                 fragmentId: fragmentId,
-                peerId: peerId
+                peerId: peerId,
+                start: new Date(),
+                status: 'started'
             });
-            
+
             // Improved abort handling
             if (!abortedEmitters[fragmentId]) abortedEmitters[fragmentId] = {};
             abortedEmitters[fragmentId][peerId] = new EventEmitter();
-            
+
             // Adaptive chunk sizing based on file size
             const CHUNK_SIZE = determineOptimalChunkSize(fileSize);
-            
+
             // Create read stream with optimal highWaterMark for performance
             const fileStream = fs.createReadStream(filePath, {
                 highWaterMark: CHUNK_SIZE
             });
-            
+
             let isTransferAborted = false;
             let pauseTimeout = null;
             let bytesTransferred = 0;
             let lastProgressReport = 0;
             const transferStartTime = Date.now();
-            
+
             // Monitor transfer for performance metrics
             const statsInterval = setInterval(() => {
                 if (isTransferAborted) {
                     clearInterval(statsInterval);
                     return;
                 }
-                
+
                 const progress = Math.round((bytesTransferred / fileSize) * 100);
                 const elapsedTime = (Date.now() - transferStartTime) / 1000;
-                const speed = bytesTransferred / elapsedTime / 1024; // KB/s
-                
-                console.log(`Transfer progress: ${progress}% of ${fragmentId} to ${peerId} (${speed.toFixed(2)} KB/s)`);
+                const speed = bytesTransferred / elapsedTime; // Bytes per second
+
+                console.log(`Transfer progress: ${progress}% of ${fragmentId} to ${peerId} (${speed.toFixed(2)} B/s)`);
+                socket.emit('client_request', {
+                    fragmentId: fragmentId,
+                    peerId: peerId,
+                    status: 'progress',
+                    progress: progress,
+                    speed: speed.toFixed(2),
+                });
             }, 5000);
 
             abortedEmitters[fragmentId][peerId].on('abort', () => {
@@ -936,48 +1121,48 @@ function sendFileToPeer(peerId, fragmentId) {
                 clearInterval(statsInterval);
                 fileStream.destroy(); // Immediately clean up resources
             });
-            
+
             // Create a buffer pool for reuse to reduce GC pressure
             const bufferCache = Buffer.allocUnsafe(CHUNK_SIZE);
-            
+
             fileStream.on('data', (chunk) => {
                 if (isTransferAborted) return;
-                
+
                 // Track transfer progress
                 bytesTransferred += chunk.length;
-                
+
                 // Check if this is the last chunk
                 const isLastChunk = bytesTransferred >= fileSize;
                 if (isLastChunk) {
                     //console.log(`Sending final chunk of ${fragmentId} to ${peerId}`);
                 }
-                
+
                 // Prepare data packet with efficient buffer concatenation
                 const fragmentIdBuffer = Buffer.from(fragmentId);
                 const headerBuffer = Buffer.alloc(2); // 1 byte for ID length, 1 byte for lastChunk flag
                 headerBuffer.writeUInt8(fragmentIdBuffer.length, 0);
                 headerBuffer.writeUInt8(isLastChunk ? 1 : 0, 1); // Add last chunk flag
-                
+
                 // Efficient buffer allocation
-                const data = Buffer.concat([headerBuffer, fragmentIdBuffer, chunk], 
-                                          2 + fragmentIdBuffer.length + chunk.length);
-                
+                const data = Buffer.concat([headerBuffer, fragmentIdBuffer, chunk],
+                    2 + fragmentIdBuffer.length + chunk.length);
+
                 // Improved backpressure handling with dynamic throttling
                 if (dataChannel.bufferedAmount > CHUNK_SIZE * 8) {
                     fileStream.pause();
-                    
+
                     if (pauseTimeout) clearTimeout(pauseTimeout);
-                    
+
                     // Dynamic timeout based on buffer fullness
                     const timeoutDuration = Math.min(
-                        Math.max(1000, Math.floor(dataChannel.bufferedAmount / 1024)), 
+                        Math.max(1000, Math.floor(dataChannel.bufferedAmount / 1024)),
                         15000
                     );
-                    
+
                     pauseTimeout = setTimeout(() => {
                         // Progressive recovery strategy
                         if (dataChannel.bufferedAmount > CHUNK_SIZE * 4) {
-                            console.log(`Buffer still high (${(dataChannel.bufferedAmount/1024/1024).toFixed(2)}MB), extending pause...`);
+                            console.log(`Buffer still high (${(dataChannel.bufferedAmount / 1024 / 1024).toFixed(2)}MB), extending pause...`);
                             // Reduce chunk size temporarily if congestion persists
                             if (pauseTimeout) clearTimeout(pauseTimeout);
                             pauseTimeout = setTimeout(() => resumeOrAbort(), 5000);
@@ -985,7 +1170,7 @@ function sendFileToPeer(peerId, fragmentId) {
                             resumeOrAbort();
                         }
                     }, timeoutDuration);
-                    
+
                     // Efficient buffer monitoring with binary backoff
                     let backoffTime = 50;
                     const bufferInterval = setInterval(() => {
@@ -993,7 +1178,7 @@ function sendFileToPeer(peerId, fragmentId) {
                             clearInterval(bufferInterval);
                             return;
                         }
-                        
+
                         if (dataChannel.bufferedAmount < CHUNK_SIZE) {
                             clearInterval(bufferInterval);
                             if (pauseTimeout) {
@@ -1010,7 +1195,7 @@ function sendFileToPeer(peerId, fragmentId) {
                         }
                     }, backoffTime);
                 }
-                
+
                 // Send the data
                 try {
                     dataChannel.send(data);
@@ -1020,16 +1205,18 @@ function sendFileToPeer(peerId, fragmentId) {
                     fileStream.destroy();
                 }
             });
-            
+
             function resumeOrAbort() {
                 if (dataChannel.bufferedAmount > 1024 * 1024 * 5) {  // 5MB threshold
                     console.log(`Aborting transfer due to persistent network congestion`);
                     isTransferAborted = true;
                     fileStream.destroy();
-                    socket.emit('node_network_overloaded', {
-                        fragmentId,
-                        peerId,
-                        bufferedAmount: dataChannel.bufferedAmount
+                    socket.emit('client_request', {
+                        fragmentId: fragmentId,
+                        peerId: peerId,
+                        status: 'error',
+                        error: 'Network congestion',
+                        end: new Date()
                     });
                     sendControlMessage(peerId, {
                         type: 'transfer_error',
@@ -1040,7 +1227,7 @@ function sendFileToPeer(peerId, fragmentId) {
                     fileStream.resume();
                 }
             }
-            
+
             fileStream.on('error', (error) => {
                 clearInterval(statsInterval);
                 console.error(`Error reading file during transfer: ${error.message}`);
@@ -1049,40 +1236,42 @@ function sendFileToPeer(peerId, fragmentId) {
                     fragmentId: fragmentId,
                     error: 'File reading error'
                 });
-                socket.emit('end_sending', {
+                socket.emit('client_request', {
                     fragmentId: fragmentId,
                     peerId: peerId,
                     status: 'error',
-                    error: 'File reading error'
+                    error: 'File reading error',
+                    end: new Date()
                 });
             });
-            
+
             fileStream.on('end', () => {
                 clearInterval(statsInterval);
                 if (!isTransferAborted) {
                     const totalTime = (Date.now() - transferStartTime) / 1000;
                     const avgSpeed = (fileSize / 1024 / totalTime).toFixed(2);
                     console.log(`Completed sending file ${fragmentId} to ${peerId} in ${totalTime.toFixed(1)}s (avg: ${avgSpeed} KB/s)`);
-                    
+
                     sendControlMessage(peerId, {
                         type: 'transfer_complete',
                         fragmentId: fragmentId
                     });
-                    
-                    socket.emit('end_sending', {
+
+                    socket.emit('client_request', {
                         fragmentId: fragmentId,
                         peerId: peerId,
-                        status: 'ok',
-                        transferTime: totalTime,
-                        speed: Math.floor(fileSize / totalTime)
+                        status: 'complete',
+                        avgSpeed: avgSpeed,
+                        end: new Date()
                     });
                 } else {
                     console.log(`Transfer of ${fragmentId} to ${peerId} was aborted`);
-                    socket.emit('end_sending', {
+                    socket.emit('client_request', {
                         fragmentId: fragmentId,
                         peerId: peerId,
-                        status: 'aborted'
-                    });                   
+                        status: 'aborted',
+                        end: new Date()
+                    });
                 }
                 delete abortedEmitters[fragmentId][peerId];
             });
@@ -1093,10 +1282,12 @@ function sendFileToPeer(peerId, fragmentId) {
                 fragmentId: fragmentId,
                 error: 'Unable to check system resources'
             });
-            socket.emit('transfer_error', {
+            socket.emit('client_request', {
                 fragmentId: fragmentId,
                 peerId: peerId,
-                error: 'Unable to check system resources'
+                status: 'error',
+                error: 'Unable to check system resources',
+                end: new Date()
             });
         });
     } catch (error) {
@@ -1115,16 +1306,16 @@ function sendFileToPeer(peerId, fragmentId) {
 function determineOptimalChunkSize(fileSize) {
     // For very small files, use smaller chunks
     if (fileSize < 100 * 1024) return 4 * 1024;  // 4KB for files under 100KB
-    
+
     // For small files, use medium chunks
     if (fileSize < 1024 * 1024) return 16 * 1024;  // 16KB for files under 1MB
-    
+
     // For medium files
     if (fileSize < 10 * 1024 * 1024) return 32 * 1024;  // 32KB for files under 10MB
-    
+
     // For large files
     if (fileSize < 100 * 1024 * 1024) return 64 * 1024;  // 64KB for files under 100MB
-    
+
     // For very large files
     return 128 * 1024;  // 128KB for files over 100MB
 }
@@ -1134,7 +1325,7 @@ function cleanupPeerConnection(peerId) {
         dataChannels[peerId].close();
         delete dataChannels[peerId];
     }
-    
+
     if (peerConnections[peerId]) {
         peerConnections[peerId].close();
         delete peerConnections[peerId];
@@ -1146,17 +1337,17 @@ socket.on('offer', async (data) => {
     try {
         const peerId = data.sender;
         if (peerConnections[peerId]) cleanupPeerConnection(peerId);
-        
+
         const peerConnection = createPeerConnection(peerId);
-        
+
         peerConnection.ondatachannel = (event) => {
             setupDataChannel(event.channel, peerId);
         };
-        
+
         await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
         const answer = await peerConnection.createAnswer();
         await peerConnection.setLocalDescription(answer);
-        
+
         socket.emit('answer', {
             target: peerId,
             answer: answer
