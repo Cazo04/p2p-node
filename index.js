@@ -885,7 +885,7 @@ function setupDataChannel(dataChannel, peerId) {
         dataChannels[peerId] = dataChannel;
 
         //Send pong message to peer
-        dataChannel.send('pong');
+        //dataChannel.send('pong');
 
         if (!peerStats.get(peerId)) {
             peerStats.set(peerId, {
@@ -929,7 +929,9 @@ function handleDataChannelMessage(data, peerId) {
                 //     prepareFileReception(message, peerId);
                 //     break;
                 case 'ready_to_receive':
-                    sendFileToPeer(peerId, message.fragmentId);
+                    setTimeout(() => {
+                        sendFileToPeer(peerId, message.fragmentId);
+                    }, 2000);
                     break;
                 case 'transfer_complete':
                     console.log(`Transfer of ${message.fragmentId} complete`);
@@ -1057,6 +1059,7 @@ function handleFileChunk(data, peerId) {
 }
 
 function sendFileToPeer(peerId, fragmentId) {
+    
     try {
         if (!fragmentsMap.has(fragmentId)) return;
 
