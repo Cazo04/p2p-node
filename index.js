@@ -6,8 +6,6 @@ const path = require('path');
 const wrtc = require('@roamhq/wrtc');
 const { EventEmitter, on } = require('events');
 const net = require('net');
-const { end } = require('../build-signal/db');
-const { error } = require('console');
 
 // Load configuration from file
 const configFilePath = path.join(__dirname, 'node-settings.json');
