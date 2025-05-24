@@ -305,14 +305,14 @@ let isHashProcessing = false;
 function startPeriodicReporting() {
     console.log('Starting periodic reporting...');
 
-    // Send disk space info every 20 seconds as heartbeat
+    // Send disk space info every 10 seconds as heartbeat
     diskSpaceInterval = setInterval(() => {
         if (!isCommandProcessing) {
             sendDiskSpace();
         } else {
             console.log('Command processing in progress, skipping disk space report');
         }
-    }, 20000);
+    }, 10000);
 
     // Send list of hashes every 5 minutes
     // hashesInterval = setInterval(() => {
