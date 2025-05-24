@@ -847,12 +847,14 @@ function onNewPeer(peerId) {
     peer.oniceconnectionstatechange = () => {
       if (['failed', 'disconnected', 'closed'].includes(peer.iceConnectionState)) {
         clearInterval(id);
-        clearTimeout(peerStats.get(peerId).peerTimeOut);
-        socket.emit('peer_stats', {
-            peerId: peerId,
-            isDisconnected: true
-        });
-        peerStats.delete(peerId);
+        if (peerStats.has(peerId)) {
+            clearTimeout(peerStats.get(peerId)?.peerTimeOut);
+            socket.emit('peer_stats', {
+                peerId: peerId,
+                isDisconnected: true
+            });
+            peerStats.delete(peerId);
+        }
       }
     };
   }
