@@ -6,6 +6,8 @@ const path = require('path');
 const wrtc = require('@roamhq/wrtc');
 const { EventEmitter, on } = require('events');
 const net = require('net');
+const { end } = require('../build-signal/db');
+const { error } = require('console');
 
 // Load configuration from file
 const configFilePath = path.join(__dirname, 'node-settings.json');
@@ -1070,11 +1072,21 @@ function sendFileToPeer(peerId, fragmentId) {
             const availableMemoryPercent = (memInfo.available / memInfo.total) * 100;
             const fileStats = fs.statSync(filePath);
             const fileSize = fileStats.size;
+            
 
             // Reject transfer if less than 15% memory available or file is too large
             if (availableMemoryPercent < 15 || dataChannel.bufferedAmount > 10 * 1024 * 1024) {
                 console.log(`Rejecting file transfer: ${fragmentId} - System memory low: ${availableMemoryPercent.toFixed(2)}%`);
-                socket.emit('node_overloaded', {});
+                const ramUsagePercent = ((memInfo.total - memInfo.available) / memInfo.total) * 100;
+                socket.emit('client_request', {
+                    fragmentId: fragmentId,
+                    peerId: peerId,
+                    end: new Date(),
+                    status: 'rejected',
+                    error: 'System memory low',
+                    ram_usage: ramUsagePercent.toFixed(2),
+                }
+                );
                 sendControlMessage(peerId, {
                     type: 'transfer_error',
                     fragmentId: fragmentId,
