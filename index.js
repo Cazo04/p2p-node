@@ -126,11 +126,11 @@ async function checkDiskSpace(storageInfo) {
 
         for (const fs of fsInfo) {
             if (fs.mount && storageInfo.path.startsWith(fs.mount)) {
-            // Check if this is a longer match than what we have
-            if (fs.mount.length > longestMatch) {
-                longestMatch = fs.mount.length;
-                relevantFs = fs;
-            }
+                // Check if this is a longer match than what we have
+                if (fs.mount.length > longestMatch) {
+                    longestMatch = fs.mount.length;
+                    relevantFs = fs;
+                }
             }
         }
 
@@ -336,73 +336,75 @@ process.on('SIGINT', () => {
 let isStartUp = false;
 // Modify the startUp function to start intervals after completion
 async function startUp() {
-    if (isStartUp) return;
-    isStartUp = true;
-
     console.log('Starting up node client...');
     console.log(`Node ID: ${node_info.id}`);
-    console.log(`Monitored paths: ${monitoredPaths.map(item => item.path).join(', ')}`);
 
-    // Check and create p2p-node-{id} folder for each path
-    for (let i = 0; i < monitoredPaths.length; i++) {
-        const pathObj = monitoredPaths[i];
-        const basePath = pathObj.path;
-        const nodeFolderName = `p2p-node-${node_info.id}`;
-        const nodeFolderPath = path.join(basePath, nodeFolderName);
+    if (!isStartUp) {
+        isStartUp = true;
 
-        console.log(`Checking if ${nodeFolderPath} exists...`);
+        console.log(`Monitored paths: ${monitoredPaths.map(item => item.path).join(', ')}`);
 
-        // Check if path format matches current OS (Windows uses \ and may have drive letters)
-        const isWindowsPath = /^[a-zA-Z]:/.test(basePath) || basePath.includes('\\');
-        const isCurrentOSWindows = path.sep === '\\';
+        // Check and create p2p-node-{id} folder for each path
+        for (let i = 0; i < monitoredPaths.length; i++) {
+            const pathObj = monitoredPaths[i];
+            const basePath = pathObj.path;
+            const nodeFolderName = `p2p-node-${node_info.id}`;
+            const nodeFolderPath = path.join(basePath, nodeFolderName);
 
-        if ((isWindowsPath && !isCurrentOSWindows) || (!isWindowsPath && isCurrentOSWindows)) {
-            console.log(`Removing ${basePath} from monitored paths due to incompatible OS format`);
-            monitoredPaths.splice(i, 1);
-            i--; // Adjust index since we're removing an element
-            continue; // Skip this path
-        }
+            console.log(`Checking if ${nodeFolderPath} exists...`);
 
-        // Check if the directory exists
-        if (!fs.existsSync(nodeFolderPath)) {
-            console.log(`Creating directory: ${nodeFolderPath}`);
-            try {
-                fs.mkdirSync(nodeFolderPath, { recursive: true });
-                console.log(`Created directory: ${nodeFolderPath}`);
-            } catch (error) {
-                console.error(`Error creating directory ${nodeFolderPath}:`, error.message);
-                console.log(`Removing ${basePath} from monitored paths due to error`);
+            // Check if path format matches current OS (Windows uses \ and may have drive letters)
+            const isWindowsPath = /^[a-zA-Z]:/.test(basePath) || basePath.includes('\\');
+            const isCurrentOSWindows = path.sep === '\\';
+
+            if ((isWindowsPath && !isCurrentOSWindows) || (!isWindowsPath && isCurrentOSWindows)) {
+                console.log(`Removing ${basePath} from monitored paths due to incompatible OS format`);
                 monitoredPaths.splice(i, 1);
                 i--; // Adjust index since we're removing an element
-                continue; // Skip this path if there's an error
+                continue; // Skip this path
             }
-        } else {
-            console.log(`Directory already exists: ${nodeFolderPath}`);
+
+            // Check if the directory exists
+            if (!fs.existsSync(nodeFolderPath)) {
+                console.log(`Creating directory: ${nodeFolderPath}`);
+                try {
+                    fs.mkdirSync(nodeFolderPath, { recursive: true });
+                    console.log(`Created directory: ${nodeFolderPath}`);
+                } catch (error) {
+                    console.error(`Error creating directory ${nodeFolderPath}:`, error.message);
+                    console.log(`Removing ${basePath} from monitored paths due to error`);
+                    monitoredPaths.splice(i, 1);
+                    i--; // Adjust index since we're removing an element
+                    continue; // Skip this path if there's an error
+                }
+            } else {
+                console.log(`Directory already exists: ${nodeFolderPath}`);
+            }
+
+            // Update the path in monitoredPaths
+            monitoredPaths[i].path = nodeFolderPath;
         }
 
-        // Update the path in monitoredPaths
-        monitoredPaths[i].path = nodeFolderPath;
-    }
+        // Instead of deleting fragments.json
+        // Clear the fragments map
+        fragmentsMap.clear();
 
-    // Instead of deleting fragments.json
-    // Clear the fragments map
-    fragmentsMap.clear();
+        // Rebuild fragments map by scanning all monitored paths
+        console.log(`Building fragments map from monitored paths`);
 
-    // Rebuild fragments map by scanning all monitored paths
-    console.log(`Building fragments map from monitored paths`);
-
-    for (const pathObj of monitoredPaths) {
-        const dirPath = pathObj.path;
-        if (fs.existsSync(dirPath)) {
-            const files = fs.readdirSync(dirPath);
-            for (const file of files) {
-                const filePath = path.join(dirPath, file);
-                const stats = fs.statSync(filePath);
-                if (stats.isFile() && !file.includes("fragments.json")) {
-                    // Assume the filename is the fragment ID
-                    const fragment_id = file;
-                    fragmentsMap.set(fragment_id, { path: filePath });
-                    console.log(`Added fragment ${fragment_id} to fragments map`);
+        for (const pathObj of monitoredPaths) {
+            const dirPath = pathObj.path;
+            if (fs.existsSync(dirPath)) {
+                const files = fs.readdirSync(dirPath);
+                for (const file of files) {
+                    const filePath = path.join(dirPath, file);
+                    const stats = fs.statSync(filePath);
+                    if (stats.isFile() && !file.includes("fragments.json")) {
+                        // Assume the filename is the fragment ID
+                        const fragment_id = file;
+                        fragmentsMap.set(fragment_id, { path: filePath });
+                        console.log(`Added fragment ${fragment_id} to fragments map`);
+                    }
                 }
             }
         }
@@ -730,45 +732,45 @@ function createPeerConnection(peerId) {
 }
 
 function classifyIp(ip) {
-    const ver = net.isIP(ip);       
+    const ver = net.isIP(ip);
     if (ver === 0) return { version: 'unknown', type: 'unknown' };
-  
+
     if (ver === 4) {
-      return { version: 'IPv4', type: isPrivateV4(ip) ? 'private' : 'public' };
+        return { version: 'IPv4', type: isPrivateV4(ip) ? 'private' : 'public' };
     }
-  
+
     return { version: 'IPv6', type: isPrivateV6(ip) ? 'private' : 'public' };
-  }
-  
-  function isPrivateV4(ip) {
+}
+
+function isPrivateV4(ip) {
     const [a, b] = ip.split('.').map(Number);
-  
+
     // RFC 1918 private blocks
     if (a === 10) return true;                     // 10.0.0.0/8
     if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
     if (a === 192 && b === 168) return true;       // 192.168.0.0/16
-  
+
     if (a === 127) return true;                    // loopback 127.0.0.0/8
     if (a === 169 && b === 254) return true;       // link‑local 169.254.0.0/16
     if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT 100.64.0.0/10
-  
-    return false;
-  }
-  
-  function isPrivateV6(ip) {
-  
-    const addr = ip.split('%')[0].toLowerCase();
-  
-    if (addr.startsWith('fc') || addr.startsWith('fd')) return true;
-  
-    if (/^fe[89ab]/.test(addr)) return true;
-  
-    if (addr === '::1') return true;
-  
-    return false;
-  }
 
-async function pollPeer(p,id) {
+    return false;
+}
+
+function isPrivateV6(ip) {
+
+    const addr = ip.split('%')[0].toLowerCase();
+
+    if (addr.startsWith('fc') || addr.startsWith('fd')) return true;
+
+    if (/^fe[89ab]/.test(addr)) return true;
+
+    if (addr === '::1') return true;
+
+    return false;
+}
+
+async function pollPeer(p, id) {
     const report = await p.getStats();
     let rtt = null;
     let bytesSent = 0;
@@ -841,30 +843,30 @@ async function pollPeer(p,id) {
 
 function onNewPeer(peerId) {
     const peer = peerConnections[peerId];
-  
-    const id = setInterval(()=> pollPeer(peer,peerId), 1000);
-  
+
+    const id = setInterval(() => pollPeer(peer, peerId), 1000);
+
     peer.oniceconnectionstatechange = () => {
-      if (['failed', 'disconnected', 'closed'].includes(peer.iceConnectionState)) {
-        clearInterval(id);
-        if (peerStats.has(peerId)) {
-            clearTimeout(peerStats.get(peerId)?.peerTimeOut);
-            socket.emit('peer_stats', {
-                peerId: peerId,
-                isDisconnected: true
-            });
-            peerStats.delete(peerId);
+        if (['failed', 'disconnected', 'closed'].includes(peer.iceConnectionState)) {
+            clearInterval(id);
+            if (peerStats.has(peerId)) {
+                clearTimeout(peerStats.get(peerId)?.peerTimeOut);
+                socket.emit('peer_stats', {
+                    peerId: peerId,
+                    isDisconnected: true
+                });
+                peerStats.delete(peerId);
+            }
         }
-      }
     };
-  }
+}
 
 function startCountdown(peerId) {
     const stat = peerStats.get(peerId);
     if (!stat) return;
 
     if (stat.peerTimeOut) {
-        clearTimeout(stat.peerTimeOut);        
+        clearTimeout(stat.peerTimeOut);
     }
 
     peerStats.set(peerId, {
@@ -1072,7 +1074,7 @@ function sendFileToPeer(peerId, fragmentId) {
             const availableMemoryPercent = (memInfo.available / memInfo.total) * 100;
             const fileStats = fs.statSync(filePath);
             const fileSize = fileStats.size;
-            
+
 
             // Reject transfer if less than 15% memory available or file is too large
             if (availableMemoryPercent < 15 || dataChannel.bufferedAmount > 10 * 1024 * 1024) {
