@@ -1,0 +1,14 @@
+[Unit]
+Description=P2P Node Service
+After=network.target
+
+[Service]
+Type=simple
+User=user                
+WorkingDirectory=/srv/p2p-node
+ExecStart=/usr/bin/node index.js
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
