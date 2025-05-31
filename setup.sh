@@ -28,6 +28,11 @@ ensure_node() {
   fi
 }
 
+install_dependencies() {
+  echo "Installing project dependencies..."
+  npm install --production
+}
+
 deploy_service() {
   echo "Copying $SERVICE_FILE to /etc/systemd/system/"
   cp "$SERVICE_FILE" /etc/systemd/system/
@@ -44,6 +49,7 @@ main() {
   fi
 
   ensure_node
+  install_dependencies
   deploy_service
 
   echo "All done! Check status with: systemctl status $SERVICE_NAME"
