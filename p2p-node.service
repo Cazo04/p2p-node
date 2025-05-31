@@ -4,7 +4,7 @@ After=network.target
 
 [Service]
 Type=simple
-User=user                
+User=root                
 WorkingDirectory=/srv/p2p-node
 ExecStart=/usr/bin/node index.js
 Restart=on-failure
