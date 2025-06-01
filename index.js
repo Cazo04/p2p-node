@@ -88,17 +88,19 @@ socket.on('connect_error', (err) => {
         }, 5000);
     } else {
         console.error("Tried all available signaling servers without success.");
-        console.log("Retrying from the first server...");
+        
+        process.exit(1);
+        // console.log("Retrying from the first server...");
 
-        // Reset to the first server and try again
-        currentServerIndex = 0;
-        const firstServer = config.signaling_servers[currentServerIndex];
-        socket.disconnect();
-        socket.io.uri = firstServer;
-        setTimeout(() => {
-            console.log(`Reconnecting to ${firstServer}...`);
-            socket.connect();
-        }, 5000);
+        // // Reset to the first server and try again
+        // currentServerIndex = 0;
+        // const firstServer = config.signaling_servers[currentServerIndex];
+        // socket.disconnect();
+        // socket.io.uri = firstServer;
+        // setTimeout(() => {
+        //     console.log(`Reconnecting to ${firstServer}...`);
+        //     socket.connect();
+        // }, 5000);
     }
 });
 
