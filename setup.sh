@@ -7,7 +7,7 @@ NODE_SYMLINK="/usr/bin/node"
 
 install_node() {
   echo "Node.js is not installed – installing Node.js 22 LTS from NodeSource..."
-  apt-get update
+  apt-get update && apt-get upgrade -y
   apt-get install -y curl ca-certificates gnupg
   curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
   apt-get install -y nodejs make g++
