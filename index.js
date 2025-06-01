@@ -113,8 +113,8 @@ const webrtcConfig = {
         { urls: "stun:stun3.l.google.com:19302" },
         
         // Twilio
-        { urls: "stun:global.stun.twilio.com:3478?transport=udp" },
-        { urls: "stun:global.stun.twilio.com:443?transport=udp" },
+        { urls: "stun:global.stun.twilio.com:3478" },
+        { urls: "stun:global.stun.twilio.com:443" },
         
         // OpenRelay
         { urls: "stun:openrelay.metered.ca:80" },
