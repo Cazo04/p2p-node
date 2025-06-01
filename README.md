@@ -1,5 +1,13 @@
 # Setup Instructions
 
+## Requirements
+
+- Hardware:
+    - CPU: 2 cores
+    - RAM: 4GB
+    - Storage: 32GB
+- Operating System: Ubuntu 22.04
+
 ## Configuring Node Settings
 
 1. First, modify the paths in `node-settings.json` to match your environment setup.
