@@ -200,12 +200,12 @@ async function sendDiskSpace() {
         diskSpaceInfo = Array.from(uniquePartitions.values());
         //console.log(`Found ${diskSpaceInfo.length} unique partitions from ${monitoredPaths.length} monitored paths`);
         let deviceDisk = {
-            totalSize: 0,
-            availableSpace: 0
+            //totalSize: 0,
+            space_available: 0
         };
         diskSpaceInfo.forEach(info => {
-            deviceDisk.totalSize += info.totalSizeBytes;
-            deviceDisk.availableSpace += info.availableSpaceBytes;
+            //deviceDisk.totalSize += info.totalSizeBytes;
+            deviceDisk.space_available += info.availableSpaceBytes;
         });
 
         // Get memory information
@@ -215,16 +215,16 @@ async function sendDiskSpace() {
         console.log(`Current RAM usage: ${ramUsagePercent.toFixed(2)}%`);
 
         const device_space = {
-            node_info: node_info,
-            disk_space: deviceDisk,
+            //node_info: node_info,
+            space_available: deviceDisk.space_available,
             ram_usage: ramUsagePercent.toFixed(2),
         };
         //console.log('Sending disk space information:', device_space);
-        socket.emit('device_space', device_space);
-        return true;
+        //socket.emit('device_space', device_space);
+        return device_space;
     } catch (error) {
         console.error('Error sending disk space information:', error.message);
-        return false;
+        return null;
     }
 }
 
@@ -311,41 +311,22 @@ socket.on('auth_response', (data) => {
         }
 });
 
-// Variables to hold interval references
-let diskSpaceInterval;
-let hashesInterval;
+socket.on("get-device-space", async (ackCb) => {
+    const deviceSpace = await sendDiskSpace();
 
-let isCommandProcessing = false;
+    ackCb(deviceSpace);
+});
+
 let isHashProcessing = false;
 
 // Function to start periodic reporting
 function startPeriodicReporting() {
     console.log('Starting periodic reporting...');
-
-    // Send disk space info every 10 seconds as heartbeat
-    diskSpaceInterval = setInterval(() => {
-        if (!isCommandProcessing) {
-            sendDiskSpace();
-        } else {
-            console.log('Command processing in progress, skipping disk space report');
-        }
-    }, 10000);
-
-    // Send list of hashes every 5 minutes
-    // hashesInterval = setInterval(() => {
-    //     if (!isHashProcessing) {
-    //         sendListHashes();
-    //     } else {
-    //         console.log('Hash processing in progress, skipping hashes report');
-    //     }
-    // }, 300000);
     sendListHashes();
 }
 
 // Clean up intervals on process exit
 process.on('SIGINT', () => {
-    if (diskSpaceInterval) clearInterval(diskSpaceInterval);
-    if (hashesInterval) clearInterval(hashesInterval);
     console.log('Intervals cleared, exiting...');
     process.exit();
 });
@@ -565,7 +546,7 @@ function downloadFile(fragment_id, url, destinationPath) {
 
 socket.on('command', (data) => {
     isCommandProcessing = true;
-    //console.log('Received command:', data);
+    console.log('Received command:', data);
     const delete_fragment = data.delete_fragment;
     const download_fragment = data.download_fragment;
 
