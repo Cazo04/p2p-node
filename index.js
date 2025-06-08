@@ -921,7 +921,7 @@ function handleDataChannelMessage(data, peerId) {
 
         if (typeof data === 'string') {
             const message = JSON.parse(data);
-            console.log(`Control message from ${peerId}: ${message.type} - ${message.fragmentId}`);
+            //console.log(`Control message from ${peerId}: ${message.type} - ${message.fragmentId}`);
 
             switch (message.type) {
                 case 'file_request':
@@ -1058,292 +1058,124 @@ function handleFileChunk(data, peerId) {
     }
 }
 
-function sendFileToPeer(peerId, fragmentId) {
-    try {
-        if (!fragmentsMap.has(fragmentId)) return;
+const MB = 1024 * 1024;
 
-        const filePath = fragmentsMap.get(fragmentId).path;
-        const dataChannel = dataChannels[peerId];
+async function sendFileToPeer(peerId, fragmentId) {
+  if (!fragmentsMap.has(fragmentId)) return;
 
-        if (!dataChannel || dataChannel.readyState !== 'open') return;
+  const { path: filePath } = fragmentsMap.get(fragmentId);
+  const dc = dataChannels[peerId];
+  if (!dc || dc.readyState !== 'open') return;
 
-        // Check system memory before starting transfer
-        si.mem().then(memInfo => {
-            const availableMemoryPercent = (memInfo.available / memInfo.total) * 100;
-            const fileStats = fs.statSync(filePath);
-            const fileSize = fileStats.size;
+  try {
+    // --- Kiểm tra tài nguyên hệ thống ---
+    const { available, total } = await si.mem();
+    const fileSize = fs.statSync(filePath).size;
 
-
-            // Reject transfer if less than 15% memory available or file is too large
-            if (availableMemoryPercent < 15 || dataChannel.bufferedAmount > 10 * 1024 * 1024) {
-                console.log(`Rejecting file transfer: ${fragmentId} - System memory low: ${availableMemoryPercent.toFixed(2)}%`);
-                const ramUsagePercent = ((memInfo.total - memInfo.available) / memInfo.total) * 100;
-                socket.emit('client_request', {
-                    fragmentId: fragmentId,
-                    peerId: peerId,
-                    end: new Date(),
-                    status: 'rejected',
-                    error: 'System memory low',
-                    ram_usage: ramUsagePercent.toFixed(2),
-                }
-                );
-                sendControlMessage(peerId, {
-                    type: 'transfer_error',
-                    fragmentId: fragmentId,
-                    error: 'Server overloaded. Please try again later.'
-                });
-                return;
-            }
-
-            console.log(`Starting file transfer: ${fragmentId} to ${peerId}`);
-            socket.emit('client_request', {
-                fragmentId: fragmentId,
-                peerId: peerId,
-                start: new Date(),
-                status: 'started'
-            });
-
-            // Improved abort handling
-            if (!abortedEmitters[fragmentId]) abortedEmitters[fragmentId] = {};
-            abortedEmitters[fragmentId][peerId] = new EventEmitter();
-
-            // Adaptive chunk sizing based on file size
-            const CHUNK_SIZE = determineOptimalChunkSize(fileSize);
-
-            // Create read stream with optimal highWaterMark for performance
-            const fileStream = fs.createReadStream(filePath, {
-                highWaterMark: CHUNK_SIZE
-            });
-
-            let isTransferAborted = false;
-            let pauseTimeout = null;
-            let bytesTransferred = 0;
-            let lastProgressReport = 0;
-            const transferStartTime = Date.now();
-
-            // Monitor transfer for performance metrics
-            const statsInterval = setInterval(() => {
-                if (isTransferAborted) {
-                    clearInterval(statsInterval);
-                    return;
-                }
-
-                const progress = Math.round((bytesTransferred / fileSize) * 100);
-                const elapsedTime = (Date.now() - transferStartTime) / 1000;
-                const speed = bytesTransferred / elapsedTime; // Bytes per second
-
-                console.log(`Transfer progress: ${progress}% of ${fragmentId} to ${peerId} (${speed.toFixed(2)} B/s)`);
-                socket.emit('client_request', {
-                    fragmentId: fragmentId,
-                    peerId: peerId,
-                    status: 'progress',
-                    progress: progress,
-                    speed: speed.toFixed(2),
-                });
-            }, 5000);
-
-            abortedEmitters[fragmentId][peerId].on('abort', () => {
-                isTransferAborted = true;
-                clearInterval(statsInterval);
-                fileStream.destroy(); // Immediately clean up resources
-            });
-
-            // Create a buffer pool for reuse to reduce GC pressure
-            const bufferCache = Buffer.allocUnsafe(CHUNK_SIZE);
-
-            fileStream.on('data', (chunk) => {
-                if (isTransferAborted) return;
-
-                // Track transfer progress
-                bytesTransferred += chunk.length;
-
-                // Check if this is the last chunk
-                const isLastChunk = bytesTransferred >= fileSize;
-                if (isLastChunk) {
-                    //console.log(`Sending final chunk of ${fragmentId} to ${peerId}`);
-                }
-
-                // Prepare data packet with efficient buffer concatenation
-                const fragmentIdBuffer = Buffer.from(fragmentId);
-                const headerBuffer = Buffer.alloc(2); // 1 byte for ID length, 1 byte for lastChunk flag
-                headerBuffer.writeUInt8(fragmentIdBuffer.length, 0);
-                headerBuffer.writeUInt8(isLastChunk ? 1 : 0, 1); // Add last chunk flag
-
-                // Efficient buffer allocation
-                const data = Buffer.concat([headerBuffer, fragmentIdBuffer, chunk],
-                    2 + fragmentIdBuffer.length + chunk.length);
-
-                // Improved backpressure handling with dynamic throttling
-                if (dataChannel.bufferedAmount > CHUNK_SIZE * 8) {
-                    fileStream.pause();
-
-                    if (pauseTimeout) clearTimeout(pauseTimeout);
-
-                    // Dynamic timeout based on buffer fullness
-                    const timeoutDuration = Math.min(
-                        Math.max(1000, Math.floor(dataChannel.bufferedAmount / 1024)),
-                        15000
-                    );
-
-                    pauseTimeout = setTimeout(() => {
-                        // Progressive recovery strategy
-                        if (dataChannel.bufferedAmount > CHUNK_SIZE * 4) {
-                            console.log(`Buffer still high (${(dataChannel.bufferedAmount / 1024 / 1024).toFixed(2)}MB), extending pause...`);
-                            // Reduce chunk size temporarily if congestion persists
-                            if (pauseTimeout) clearTimeout(pauseTimeout);
-                            pauseTimeout = setTimeout(() => resumeOrAbort(), 5000);
-                        } else {
-                            resumeOrAbort();
-                        }
-                    }, timeoutDuration);
-
-                    // Efficient buffer monitoring with binary backoff
-                    let backoffTime = 50;
-                    const bufferInterval = setInterval(() => {
-                        if (isTransferAborted) {
-                            clearInterval(bufferInterval);
-                            return;
-                        }
-
-                        if (dataChannel.bufferedAmount < CHUNK_SIZE) {
-                            clearInterval(bufferInterval);
-                            if (pauseTimeout) {
-                                clearTimeout(pauseTimeout);
-                                pauseTimeout = null;
-                            }
-                            fileStream.resume();
-                        } else {
-                            // Exponential backoff for buffer checking
-                            backoffTime = Math.min(backoffTime * 1.5, 1000);
-                            setTimeout(() => {
-                                if (!isTransferAborted) fileStream.resume();
-                            }, backoffTime);
-                        }
-                    }, backoffTime);
-                }
-
-                // Send the data
-                try {
-                    dataChannel.send(data);
-                } catch (err) {
-                    console.error(`Error sending data chunk: ${err.message}`);
-                    isTransferAborted = true;
-                    fileStream.destroy();
-                }
-            });
-
-            function resumeOrAbort() {
-                if (dataChannel.bufferedAmount > 1024 * 1024 * 5) {  // 5MB threshold
-                    console.log(`Aborting transfer due to persistent network congestion`);
-                    isTransferAborted = true;
-                    fileStream.destroy();
-                    socket.emit('client_request', {
-                        fragmentId: fragmentId,
-                        peerId: peerId,
-                        status: 'error',
-                        error: 'Network congestion',
-                        end: new Date()
-                    });
-                    sendControlMessage(peerId, {
-                        type: 'transfer_error',
-                        fragmentId: fragmentId,
-                        error: 'Transfer aborted due to network congestion'
-                    });
-                } else {
-                    fileStream.resume();
-                }
-            }
-
-            fileStream.on('error', (error) => {
-                clearInterval(statsInterval);
-                console.error(`Error reading file during transfer: ${error.message}`);
-                sendControlMessage(peerId, {
-                    type: 'transfer_error',
-                    fragmentId: fragmentId,
-                    error: 'File reading error'
-                });
-                socket.emit('client_request', {
-                    fragmentId: fragmentId,
-                    peerId: peerId,
-                    status: 'error',
-                    error: 'File reading error',
-                    end: new Date()
-                });
-            });
-
-            fileStream.on('end', () => {
-                clearInterval(statsInterval);
-                if (!isTransferAborted) {
-                    const totalTime = (Date.now() - transferStartTime) / 1000;
-                    const avgSpeed = (fileSize / 1024 / totalTime).toFixed(2);
-                    console.log(`Completed sending file ${fragmentId} to ${peerId} in ${totalTime.toFixed(1)}s (avg: ${avgSpeed} KB/s)`);
-
-                    // sendControlMessage(peerId, {
-                    //     type: 'transfer_complete',
-                    //     fragmentId: fragmentId
-                    // });
-
-                    socket.emit('client_request', {
-                        fragmentId: fragmentId,
-                        peerId: peerId,
-                        status: 'complete',
-                        avgSpeed: avgSpeed,
-                        end: new Date()
-                    });
-                } else {
-                    console.log(`Transfer of ${fragmentId} to ${peerId} was aborted`);
-                    socket.emit('client_request', {
-                        fragmentId: fragmentId,
-                        peerId: peerId,
-                        status: 'aborted',
-                        end: new Date()
-                    });
-                }
-                delete abortedEmitters[fragmentId][peerId];
-            });
-        }).catch(error => {
-            console.error('Error checking memory:', error);
-            sendControlMessage(peerId, {
-                type: 'transfer_error',
-                fragmentId: fragmentId,
-                error: 'Unable to check system resources'
-            });
-            socket.emit('client_request', {
-                fragmentId: fragmentId,
-                peerId: peerId,
-                status: 'error',
-                error: 'Unable to check system resources',
-                end: new Date()
-            });
-        });
-    } catch (error) {
-        console.error(`Error sending file:`, error);
-        if (dataChannels[peerId]?.readyState === 'open') {
-            sendControlMessage(peerId, {
-                type: 'transfer_error',
-                fragmentId: fragmentId,
-                error: 'Internal server error'
-            });
-        }
+    if ((available / total) * 100 < 15 || dc.bufferedAmount > 10 * MB) {
+      return rejectTransfer('System memory low');
     }
+
+    // --- Chuẩn bị stream ---
+    const CHUNK_SIZE = determineOptimalChunkSize(fileSize);
+    const stream = fs.createReadStream(filePath, { highWaterMark: CHUNK_SIZE });
+
+    const aborter = (abortedEmitters[fragmentId] ??= {});
+    aborter[peerId] = new EventEmitter();
+
+    let transferred = 0;
+    let aborted = false;
+    const start = Date.now();
+    const reportId = setInterval(reportProgress, 5_000);
+
+    // --- Xử lý abort ---
+    aborter[peerId].once('abort', () => {
+      aborted = true;
+      cleanup('aborted', 'Transfer cancelled');
+    });
+
+    // --- Truyền dữ liệu ---
+    stream.on('data', chunk => {
+      if (aborted) return;
+      throttle();
+      const header = buildHeader(fragmentId, transferred + chunk.length >= fileSize);
+      dc.send(Buffer.concat([header, chunk], header.length + chunk.length));
+      transferred += chunk.length;
+    });
+
+    stream.once('error', err => cleanup('error', err.message));
+    stream.once('end', () => cleanup('complete'));
+
+    emitRequest('started');
+
+    /* --------- Helper closures --------- */
+
+    function reportProgress() {
+      const percent = Math.round((transferred / fileSize) * 100);
+      const speed = transferred / ((Date.now() - start) / 1000);
+      emitRequest('progress', { progress: percent, speed: speed.toFixed(2) });
+    }
+
+    function throttle() {
+      if (dc.bufferedAmount < CHUNK_SIZE * 8) return;
+      stream.pause();
+      const resume = () => dc.bufferedAmount < CHUNK_SIZE && stream.resume();
+      const id = setInterval(resume, 100);
+      setTimeout(() => clearInterval(id), 15_000);
+    }
+
+    function cleanup(status, error) {
+      clearInterval(reportId);
+      stream.destroy();
+      if (status === 'complete' && !aborted) {
+        const t = (Date.now() - start) / 1000;
+        emitRequest('complete', { avgSpeed: (fileSize / 1024 / t).toFixed(2) });
+      } else {
+        emitRequest(status, error ? { error } : {});
+      }
+      if (error) {
+        sendControlMessage(peerId, { type: 'transfer_error', fragmentId, error });
+      }
+      delete abortedEmitters[fragmentId][peerId];
+    }
+
+    function rejectTransfer(reason) {
+      emitRequest('rejected', { error: reason });
+      sendControlMessage(peerId, { type: 'transfer_error', fragmentId, error: reason });
+    }
+
+    function emitRequest(status, extra = {}) {
+      socket.emit('client_request', {
+        fragmentId,
+        peerId,
+        status,
+        ...extra,
+        time: new Date()
+      });
+    }
+
+  } catch (err) {
+    console.error(err);
+    if (dc.readyState === 'open') {
+      sendControlMessage(peerId, { type: 'transfer_error', fragmentId, error: 'Internal error' });
+    }
+  }
 }
 
-// Helper function to determine optimal chunk size based on file size
-function determineOptimalChunkSize(fileSize) {
-    // For very small files, use smaller chunks
-    if (fileSize < 100 * 1024) return 4 * 1024;  // 4KB for files under 100KB
+function buildHeader(fragmentId, last) {
+  const idBuf = Buffer.from(fragmentId);
+  const header = Buffer.alloc(2);
+  header.writeUInt8(idBuf.length, 0);
+  header.writeUInt8(last ? 1 : 0, 1);
+  return Buffer.concat([header, idBuf]);
+}
 
-    // For small files, use medium chunks
-    if (fileSize < 1024 * 1024) return 16 * 1024;  // 16KB for files under 1MB
-
-    // For medium files
-    if (fileSize < 10 * 1024 * 1024) return 32 * 1024;  // 32KB for files under 10MB
-
-    // For large files
-    if (fileSize < 100 * 1024 * 1024) return 64 * 1024;  // 64KB for files under 100MB
-
-    // For very large files
-    return 128 * 1024;  // 128KB for files over 100MB
+function determineOptimalChunkSize(size) {
+  if (size < 100 * 1024) return 4 * 1024;   // <100KB
+  if (size < MB) return 16 * 1024;          // <1MB
+  if (size < 10 * MB) return 32 * 1024;     // <10MB
+  if (size < 100 * MB) return 64 * 1024;    // <100MB
+  return 128 * 1024;                        // >100MB
 }
 
 function cleanupPeerConnection(peerId) {
