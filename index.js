@@ -18,7 +18,7 @@ if (!fs.existsSync(configFilePath)) {
     // Create default config template
     const defaultConfig = {
         "signaling_servers": [
-            "https://p2p.cazo-dev.net/socket.io",
+            "https://p2p.cazo-dev.net",
             "http://localhost:3000",
         ],
         "webrtc": {

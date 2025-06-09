@@ -1,6 +1,6 @@
 {
   "signaling_servers": [
-    "https://p2p.cazo-dev.net/socket.io",
+    "https://p2p.cazo-dev.net",
     "http://localhost:3000"
   ],
   "webrtc": {
