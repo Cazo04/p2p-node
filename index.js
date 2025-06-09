@@ -319,12 +319,6 @@ socket.on("get-device-space", async (ackCb) => {
 
 let isHashProcessing = false;
 
-// Function to start periodic reporting
-function startPeriodicReporting() {
-    console.log('Starting periodic reporting...');
-    sendListHashes();
-}
-
 // Clean up intervals on process exit
 process.on('SIGINT', () => {
     console.log('Intervals cleared, exiting...');
@@ -411,14 +405,7 @@ async function startUp() {
 
     console.log(`Updated monitored paths: ${monitoredPaths.map(item => item.path).join(', ')}`);
 
-    // Send disk space information to signaling server
-    if (await sendDiskSpace()) {
-        // Send list of hashes to signaling server
-        sendListHashes();
-
-        // Start periodic reporting after initial data is sent
-        startPeriodicReporting();
-    }
+    sendListHashes();
 }
 
 // Socket connection and authentication
