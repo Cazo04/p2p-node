@@ -931,13 +931,13 @@ function handleDataChannelMessage(data, peerId) {
                 //     prepareFileReception(message, peerId);
                 //     break;
                 case 'ready_to_receive':
-                    sendFileToPeer(peerId, message.fragmentId);
+                    sendFileToPeer(peerId, message.fragmentId, message.sessionId);
                     break;
                 case 'transfer_complete':
                     console.log(`Transfer of ${message.fragmentId} complete`);
                     break;
                 case 'abort_transfer':
-                    abortedTransfer(message.fragmentId, peerId);
+                    abortedTransfer(message.fragmentId, peerId, message.sessionId);
                     break;
             }
         } else {
@@ -950,11 +950,11 @@ function handleDataChannelMessage(data, peerId) {
 
 let abortedEmitters = {};
 
-function abortedTransfer(fragmentId, peerId) {
+function abortedTransfer(fragmentId, peerId, sessionId) {
     if (!abortedEmitters[fragmentId]) return;
 
-    if (abortedEmitters[fragmentId][peerId]) {
-        abortedEmitters[fragmentId][peerId].emit('abort');
+    if (abortedEmitters[fragmentId][peerId + sessionId]) {
+        abortedEmitters[fragmentId][peerId + sessionId].emit('abort');
     }
 }
 
@@ -1060,7 +1060,7 @@ function handleFileChunk(data, peerId) {
 
 const MB = 1024 * 1024;
 
-async function sendFileToPeer(peerId, fragmentId) {
+async function sendFileToPeer(peerId, fragmentId, sessionId) {
   if (!fragmentsMap.has(fragmentId)) return;
 
   const { path: filePath } = fragmentsMap.get(fragmentId);
@@ -1081,7 +1081,7 @@ async function sendFileToPeer(peerId, fragmentId) {
     const stream = fs.createReadStream(filePath, { highWaterMark: CHUNK_SIZE });
 
     const aborter = (abortedEmitters[fragmentId] ??= {});
-    aborter[peerId] = new EventEmitter();
+    aborter[peerId + sessionId] = new EventEmitter();
 
     let transferred = 0;
     let aborted = false;
@@ -1089,7 +1089,7 @@ async function sendFileToPeer(peerId, fragmentId) {
     const reportId = setInterval(reportProgress, 5_000);
 
     // --- Xử lý abort ---
-    aborter[peerId].once('abort', () => {
+    aborter[peerId + sessionId].once('abort', () => {
       aborted = true;
       cleanup('aborted', 'Transfer cancelled');
     });
@@ -1098,7 +1098,7 @@ async function sendFileToPeer(peerId, fragmentId) {
     stream.on('data', chunk => {
       if (aborted) return;
       throttle();
-      const header = buildHeader(fragmentId, transferred + chunk.length >= fileSize);
+      const header = buildHeader(sessionId, transferred + chunk.length >= fileSize);
       dc.send(Buffer.concat([header, chunk], header.length + chunk.length));
       transferred += chunk.length;
     });
@@ -1136,7 +1136,7 @@ async function sendFileToPeer(peerId, fragmentId) {
       if (error) {
         sendControlMessage(peerId, { type: 'transfer_error', fragmentId, error });
       }
-      delete abortedEmitters[fragmentId][peerId];
+      delete abortedEmitters[fragmentId][peerId + sessionId];
     }
 
     function rejectTransfer(reason) {
@@ -1162,8 +1162,8 @@ async function sendFileToPeer(peerId, fragmentId) {
   }
 }
 
-function buildHeader(fragmentId, last) {
-  const idBuf = Buffer.from(fragmentId);
+function buildHeader(sessionId, last) {
+  const idBuf = Buffer.from(sessionId);
   const header = Buffer.alloc(2);
   header.writeUInt8(idBuf.length, 0);
   header.writeUInt8(last ? 1 : 0, 1);
