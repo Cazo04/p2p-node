@@ -1098,9 +1098,9 @@ async function sendFileToPeer(peerId, fragmentId, sessionId) {
     /* --------- Helper closures --------- */
 
     function reportProgress() {
-      const percent = Math.round((transferred / fileSize) * 100);
-      const speed = transferred / ((Date.now() - start) / 1000);
-      emitRequest('progress', { progress: percent, speed: speed.toFixed(2) });
+    //   const percent = Math.round((transferred / fileSize) * 100);
+    //   const speed = transferred / ((Date.now() - start) / 1000);
+    //   emitRequest('progress', { progress: percent, speed: speed.toFixed(2) });
     }
 
     function throttle() {
