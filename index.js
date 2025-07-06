@@ -1054,6 +1054,12 @@ async function sendFileToPeer(peerId, fragmentId, sessionId) {
     const dc = dataChannels[peerId];
     if (!dc || dc.readyState !== 'open') return;
 
+    // Log first 6 and last 6 characters of the fragmentId, peerId and sessionId
+    const shortFragmentId = fragmentId.length > 12 ? fragmentId.slice(0, 6) + '...' + fragmentId.slice(-6) : fragmentId;
+    const shortPeerId = peerId.length > 12 ? peerId.slice(0, 6) + '...' + peerId.slice(-6) : peerId;
+    const shortSessionId = sessionId.length > 12 ? sessionId.slice(0, 6) + '...' + sessionId.slice(-6) : sessionId;
+    console.log(`Preparing to send file ${shortFragmentId} to peer ${shortPeerId} (session ${shortSessionId})`);
+
     try {
         // --- Kiểm tra tài nguyên hệ thống ---
         const { available, total } = await si.mem();
@@ -1079,6 +1085,7 @@ async function sendFileToPeer(peerId, fragmentId, sessionId) {
         aborter[peerId + sessionId].once('abort', () => {
             aborted = true;
             cleanup('aborted', 'Transfer cancelled');
+            console.log(`Transfer of ${shortFragmentId} to ${shortPeerId} (session ${shortSessionId}) aborted`);
         });
 
         // --- Truyền dữ liệu ---
