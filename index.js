@@ -88,7 +88,7 @@ socket.on('connect_error', (err) => {
         }, 5000);
     } else {
         console.error("Tried all available signaling servers without success.");
-        
+
         process.exit(1);
         // console.log("Retrying from the first server...");
 
@@ -111,11 +111,11 @@ const webrtcConfig = {
         { urls: "stun:stun1.l.google.com:19302" },
         { urls: "stun:stun2.l.google.com:19302" },
         { urls: "stun:stun3.l.google.com:19302" },
-        
+
         // Twilio
         { urls: "stun:global.stun.twilio.com:3478" },
         { urls: "stun:global.stun.twilio.com:443" },
-        
+
         // OpenRelay
         { urls: "stun:openrelay.metered.ca:80" },
         { urls: "stun:openrelay.metered.ca:443" }
@@ -1048,121 +1048,117 @@ function handleFileChunk(data, peerId) {
 const MB = 1024 * 1024;
 
 async function sendFileToPeer(peerId, fragmentId, sessionId) {
-  if (!fragmentsMap.has(fragmentId)) return;
+    if (!fragmentsMap.has(fragmentId)) return;
 
-  const { path: filePath } = fragmentsMap.get(fragmentId);
-  const dc = dataChannels[peerId];
-  if (!dc || dc.readyState !== 'open') return;
+    const { path: filePath } = fragmentsMap.get(fragmentId);
+    const dc = dataChannels[peerId];
+    if (!dc || dc.readyState !== 'open') return;
 
-  try {
-    // --- Kiểm tra tài nguyên hệ thống ---
-    const { available, total } = await si.mem();
-    const fileSize = fs.statSync(filePath).size;
+    try {
+        // --- Kiểm tra tài nguyên hệ thống ---
+        const { available, total } = await si.mem();
+        const fileSize = fs.statSync(filePath).size;
 
-    if ((available / total) * 100 < 15 || dc.bufferedAmount > 10 * MB) {
-      return rejectTransfer('System memory low');
+        if ((available / total) * 100 < 15 || dc.bufferedAmount > 10 * MB) {
+            return rejectTransfer('System memory low');
+        }
+
+        // --- Chuẩn bị stream ---
+        const CHUNK_SIZE = determineOptimalChunkSize(fileSize);
+        const stream = fs.createReadStream(filePath, { highWaterMark: CHUNK_SIZE });
+
+        const aborter = (abortedEmitters[fragmentId] ??= {});
+        aborter[peerId + sessionId] = new EventEmitter();
+
+        let transferred = 0;
+        let aborted = false;
+        const start = Date.now();
+        const reportId = setInterval(reportProgress, 5_000);
+
+        // --- Xử lý abort ---
+        aborter[peerId + sessionId].once('abort', () => {
+            aborted = true;
+            cleanup('aborted', 'Transfer cancelled');
+        });
+
+        // --- Truyền dữ liệu ---
+        stream.on('data', chunk => {
+            if (aborted) return;
+            throttle();
+            const header = buildHeader(sessionId, transferred + chunk.length >= fileSize);
+            dc.send(Buffer.concat([header, chunk], header.length + chunk.length));
+            transferred += chunk.length;
+        });
+
+        stream.once('error', err => cleanup('error', err.message));
+        stream.once('end', () => cleanup('complete'));
+
+        emitRequest('started');
+
+        /* --------- Helper closures --------- */
+
+        function reportProgress() {
+            //   const percent = Math.round((transferred / fileSize) * 100);
+            //   const speed = transferred / ((Date.now() - start) / 1000);
+            //   emitRequest('progress', { progress: percent, speed: speed.toFixed(2) });
+        }
+
+        function throttle() {
+            if (dc.bufferedAmount < CHUNK_SIZE * 8) return;
+            stream.pause();
+            const resume = () => dc.bufferedAmount < CHUNK_SIZE && stream.resume();
+            const id = setInterval(resume, 100);
+            setTimeout(() => clearInterval(id), 15_000);
+        }
+
+        function cleanup(status, error) {
+            clearInterval(reportId);
+            stream.destroy();
+            if (status === 'complete' && !aborted) {
+                const t = (Date.now() - start) / 1000;
+                emitRequest('complete', { avgSpeed: (fileSize / 1024 / t).toFixed(2) });
+            } else {
+                emitRequest(status, error ? { error } : {});
+            }
+            if (error) {
+                sendControlMessage(peerId, { type: 'transfer_error', fragmentId, error });
+            }
+            delete abortedEmitters[fragmentId][peerId + sessionId];
+        }
+
+        function rejectTransfer(reason) {
+            emitRequest('rejected', { error: reason });
+            sendControlMessage(peerId, { type: 'transfer_error', fragmentId, error: reason });
+        }
+
+        function emitRequest(status, extra = {}) {
+            socket.emit('client_request', {
+                fragmentId,
+                peerId,
+                status,
+                ...extra,
+                time: new Date()
+            });
+        }
+
+    } catch (err) {
+        console.error(err);
+        if (dc.readyState === 'open') {
+            sendControlMessage(peerId, { type: 'transfer_error', fragmentId, error: 'Internal error' });
+        }
     }
-
-    // --- Chuẩn bị stream ---
-    const CHUNK_SIZE = determineOptimalChunkSize(fileSize);
-    const stream = fs.createReadStream(filePath, { highWaterMark: CHUNK_SIZE });
-
-    const aborter = (abortedEmitters[fragmentId] ??= {});
-    aborter[peerId + sessionId] = new EventEmitter();
-
-    let transferred = 0;
-    let aborted = false;
-    const start = Date.now();
-    const reportId = setInterval(reportProgress, 5_000);
-
-    // --- Xử lý abort ---
-    aborter[peerId + sessionId].once('abort', () => {
-      aborted = true;
-      cleanup('aborted', 'Transfer cancelled');
-    });
-
-    // --- Truyền dữ liệu ---
-    stream.on('data', chunk => {
-      if (aborted) return;
-      throttle();
-      const header = buildHeader(sessionId, transferred + chunk.length >= fileSize);
-      dc.send(Buffer.concat([header, chunk], header.length + chunk.length));
-      transferred += chunk.length;
-    });
-
-    stream.once('error', err => cleanup('error', err.message));
-    stream.once('end', () => cleanup('complete'));
-
-    emitRequest('started');
-
-    /* --------- Helper closures --------- */
-
-    function reportProgress() {
-    //   const percent = Math.round((transferred / fileSize) * 100);
-    //   const speed = transferred / ((Date.now() - start) / 1000);
-    //   emitRequest('progress', { progress: percent, speed: speed.toFixed(2) });
-    }
-
-    function throttle() {
-      if (dc.bufferedAmount < CHUNK_SIZE * 8) return;
-      stream.pause();
-      const resume = () => dc.bufferedAmount < CHUNK_SIZE && stream.resume();
-      const id = setInterval(resume, 100);
-      setTimeout(() => clearInterval(id), 15_000);
-    }
-
-    function cleanup(status, error) {
-      clearInterval(reportId);
-      stream.destroy();
-      if (status === 'complete' && !aborted) {
-        const t = (Date.now() - start) / 1000;
-        emitRequest('complete', { avgSpeed: (fileSize / 1024 / t).toFixed(2) });
-      } else {
-        emitRequest(status, error ? { error } : {});
-      }
-      if (error) {
-        sendControlMessage(peerId, { type: 'transfer_error', fragmentId, error });
-      }
-      delete abortedEmitters[fragmentId][peerId + sessionId];
-    }
-
-    function rejectTransfer(reason) {
-      emitRequest('rejected', { error: reason });
-      sendControlMessage(peerId, { type: 'transfer_error', fragmentId, error: reason });
-    }
-
-    function emitRequest(status, extra = {}) {
-      socket.emit('client_request', {
-        fragmentId,
-        peerId,
-        status,
-        ...extra,
-        time: new Date()
-      });
-    }
-
-  } catch (err) {
-    console.error(err);
-    if (dc.readyState === 'open') {
-      sendControlMessage(peerId, { type: 'transfer_error', fragmentId, error: 'Internal error' });
-    }
-  }
 }
 
 function buildHeader(sessionId, last) {
-  const idBuf = Buffer.from(sessionId);
-  const header = Buffer.alloc(2);
-  header.writeUInt8(idBuf.length, 0);
-  header.writeUInt8(last ? 1 : 0, 1);
-  return Buffer.concat([header, idBuf]);
+    const idBuf = Buffer.from(sessionId);
+    const header = Buffer.alloc(2);
+    header.writeUInt8(idBuf.length, 0);
+    header.writeUInt8(last ? 1 : 0, 1);
+    return Buffer.concat([header, idBuf]);
 }
 
 function determineOptimalChunkSize(size) {
-  if (size < 100 * 1024) return 4 * 1024;   // <100KB
-  if (size < MB) return 16 * 1024;          // <1MB
-  if (size < 10 * MB) return 32 * 1024;     // <10MB
-  if (size < 100 * MB) return 64 * 1024;    // <100MB
-  return 128 * 1024;                        // >100MB
+    return 64 * 1024;
 }
 
 function cleanupPeerConnection(peerId) {
